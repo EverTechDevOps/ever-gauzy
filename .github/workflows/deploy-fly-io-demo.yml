@@ -1,0 +1,63 @@
+name: Deploy to fly.io Demo
+
+on:
+    workflow_run:
+        workflows: ['Build and Publish Docker Images Demo']
+        branches: [develop, temp]
+        types:
+            - completed
+
+jobs:
+    deploy-demo:
+        runs-on: ubuntu-22.04
+
+        environment: demo
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v3
+
+            - name: Set up Docker Buildx
+              id: buildx
+              # Use the action from the master, as we've seen some inconsistencies with @v1
+              # Issue: https://github.com/docker/build-push-action/issues/286
+              uses: docker/setup-buildx-action@master
+              # Only worked for us with this option on 🤷‍♂️
+              with:
+                install: true
+
+            - name: Cache Docker layers
+              uses: actions/cache@v2
+              with:
+                path: /tmp/.buildx-cache
+                # Key is named differently to avoid collision
+                key: ${{ runner.os }}-multi-buildx-${{ github.sha }}
+                restore-keys: |
+                  ${{ runner.os }}-multi-buildx
+
+                  - name: Build production image
+                  uses: docker/build-push-action@v2
+                  with:
+                    context: .
+                    builder: ${{ steps.buildx.outputs.name }}
+                    file: ./Dockerfile
+                    # Set the desired build target here
+                    target: app
+                    load: true
+                    tags: ${{ steps.prep.outputs.tagged_image }}
+                    cache-from: type=local,src=/tmp/.buildx-cache
+                    # Note the mode=max here
+                    # More: https://github.com/moby/buildkit#--export-cache-options
+                    # And: https://github.com/docker/buildx#--cache-tonametypetypekeyvalue
+                    cache-to: type=local,mode=max,dest=/tmp/.buildx-cache-new
+
+            - name: Move cache
+             run: |
+                    rm -rf /tmp/.buildx-cache
+                    mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+            - name: Fly Deploy
+              uses: superfly/flyctl-actions/setup-flyctl@master
+              run: flyctl deploy --remote-only
+              env:
+                FLY_API_TOKEN: 'FlyV1 fm1r_lJPECAAAAAAAAQ5yxBBhtch1SZnikPum8kpzm8IgwrVodHRwczovL2FwaS5mbHkuaW8vdjGWAJLOAAPtjR8Lk7lodHRwczovL2FwaS5mbHkuaW8vYWFhL3YxxDymrpQDbbXXLtcrGDxvjpiA7NrPXe6ejNP2MINP3CEG3VeCpypYHzEMj83hOCWgkigc9sLeb2evYHeSpQLER12kDIQCTWGeHwx9UaSmFdvbjMqj2lvZ4G7/NgF6q/+pwblFB3YLx5Ov9BE2CjtIpanpVeHgH+aiw5fB0RurFfZuv7uKh8JdDZKUA5GBzgAVYNofBZGCp2J1aWxkZXIfondnHwHEIHF3QTWv1aTgf9/U5+1I8F4JcbtrpPBbdtn269mWjty2,fm1a_lJPER12kDIQCTWGeHwx9UaSmFdvbjMqj2lvZ4G7/NgF6q/+pwblFB3YLx5Ov9BE2CjtIpanpVeHgH+aiw5fB0RurFfZuv7uKh8JdxBBkBlCXiyT1qvOVCMspM8z7w7lodHRwczovL2FwaS5mbHkuaW8vYWFhL3YxmASSzmS065XPAAAAATtIgaMKkc4AA2WQDZKSBZGHpWFkZG9uH6didWlsZGVyH6ZjaGVja3MfpmRvbWFpbh+sbGl0ZWZzLWNsb3VkH6RzaXRlH6J3Zx8fDMQQQD5UWDp9hgmWDqZ1e4PHIMQg9ORxHE1/taWY1SNa103H6VCdLoXn60SVwD7YGHNPjSI='
